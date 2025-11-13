@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel to JSON Analyzer</title>
+    <!-- 1. Load Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 2. Load SheetJS (xlsx.js) library for Excel parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        /* Use Inter font */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom styles for file input */
+        #file-input::file-selector-button {
+            background-color: #3b82f6; /* bg-blue-600 */
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem; /* rounded-md */
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        #file-input::file-selector-button:hover {
+            background-color: #2563eb; /* bg-blue-700 */
+        }
+        /* Simple spinner animation */
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #3b82f6;
+            border-radius: 50%;
+            width: 2rem;
+            height: 2rem;
+            animation: spin 1s linear infinite;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 md:p-8 flex items-center justify-center font-inter">
+
+    <div class="bg-white w-full max-w-5xl mx-auto p-6 md:p-8 rounded-xl shadow-2xl">
+        
+        <!-- === Header === -->
+        <h1 class="text-3xl font-bold text-gray-800 text-center">Excel to JSON Analyzer</h1>
+        <p class="text-gray-600 text-center mt-2">
+            Upload a complex .xlsx, .xls, or .csv file. The data is parsed entirely in your browser.
+        </p>
+
+        <!-- === Upload Section === -->
+        <div id="upload-area" class="mt-8 border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-blue-500 transition-colors">
+            <input type="file" id="file-input" class="text-gray-700 font-medium" accept=".xlsx, .xls, .csv">
+            <p id="file-message" class="text-gray-500 text-sm mt-2">Click to select a file or drag and drop</p>
+        </div>
+
+        <!-- === Loading Spinner === -->
+        <div id="loading-spinner" class="hidden my-8 flex justify-center items-center flex-col">
+            <div class="spinner"></div>
+            <p class="text-blue-600 mt-2 font-medium">Analyzing complex workbook...</p>
+        </div>
+
+        <!-- === Message/Error Box === -->
+        <div id="message-box" class="hidden mt-4 p-3 rounded-lg text-center font-medium"></div>
+
+        <!-- === Results Section === -->
+        <div id="results-area" class="hidden mt-8">
+            <h2 class="text-2xl font-semibold text-gray-700">Analyzed Data</h2>
+            <p class="text-gray-600 mt-1">
+                File: <span id="file-name-display" class="font-medium text-gray-800"></span>
+            </p>
+
+            <!-- --- Output Options --- -->
+            <div class="mt-4 flex flex-wrap gap-4 items-center bg-gray-50 p-4 rounded-lg">
+                <!-- Sheet Selector -->
+                <div class="flex-grow">
+                    <label for="sheet-select" class="block text-sm font-medium text-gray-700">Select Sheet (for Simple JSON)</label>
+                    <select id="sheet-select" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"></select>
+                </div>
+                <!-- Full JSON Button -->
+                <div class="flex-shrink-0">
+                    <label class="block text-sm font-medium text-gray-700 opacity-0 hidden sm:block">Or</label>
+                    <button id="show-full-json-btn" class="mt-1 w-full p-2 bg-gray-600 text-white rounded-md shadow-sm hover:bg-gray-700 transition-colors">
+                        Show Full Workbook JSON
+                    </button>
+                </div>
+                <!-- Note -->
+                <p class="text-xs text-gray-500 w-full">
+                    <strong>Simple JSON:</strong> A clean array of objects for the selected sheet (uses first row as header).<br>
+                    <strong>Full Workbook JSON:</strong> The raw parser output, including formulas, types, and all sheets (much more complex).
+                </p>
+            </div>
+
+            <!-- --- JSON Output Area --- -->
+            <div class="mt-6">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-lg font-semibold text-gray-700">Generated JSON</h3>
+                    <button id="copy-json-btn" class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition-colors">
+                        Copy to Clipboard
+                    </button>
+                </div>
+                <!-- This <pre> block will show the formatted JSON -->
+                <pre id="json-output" class="bg-gray-900 text-green-300 p-4 rounded-lg overflow-auto max-h-[500px] text-sm leading-relaxed"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Element References ---
+        const fileInput = document.getElementById('file-input');
+        const fileMessage = document.getElementById('file-message');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const messageBox = document.getElementById('message-box');
+        const resultsArea = document.getElementById('results-area');
+        const fileNameDisplay = document.getElementById('file-name-display');
+        const sheetSelect = document.getElementById('sheet-select');
+        const showFullJsonBtn = document.getElementById('show-full-json-btn');
+        const copyJsonBtn = document.getElementById('copy-json-btn');
+        const jsonOutput = document.getElementById('json-output');
+
+        // --- Global State ---
+        let currentWorkbook = null; // Will store the parsed workbook object
+
+        // --- Event Listeners ---
+        fileInput.addEventListener('change', handleFile);
+        sheetSelect.addEventListener('change', renderSimpleJson);
+        showFullJsonBtn.addEventListener('click', renderFullJson);
+        copyJsonBtn.addEventListener('click', copyJsonToClipboard);
+
+        /**
+         * Handles the file upload event
+         */
+        async function handleFile(event) {
+            const file = event.target.files[0];
+            if (!file) {
+                showMessage('No file selected.', 'error');
+                return;
+            }
+
+            // Check file type
+            const validTypes = ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'text/csv'];
+            if (!validTypes.includes(file.type)) {
+                showMessage('Invalid file type. Please upload a .xlsx, .xls, or .csv file.', 'error');
+                fileInput.value = ''; // Reset input
+                return;
+            }
+
+            // Reset UI
+            resultsArea.classList.add('hidden');
+            messageBox.classList.add('hidden');
+            loadingSpinner.classList.remove('hidden');
+            currentWorkbook = null;
+
+            try {
+                const data = await file.arrayBuffer();
+                
+                // Use SheetJS to read the file data
+                // This is the main parsing step
+                currentWorkbook = XLSX.read(data, {
+                    type: 'array',
+                    cellDates: true, // Attempt to parse cell dates
+                });
+
+                // --- Populate UI ---
+                fileNameDisplay.textContent = file.name;
+
+                // Populate sheet selector dropdown
+                sheetSelect.innerHTML = ''; // Clear previous options
+                currentWorkbook.SheetNames.forEach(sheetName => {
+                    const option = document.createElement('option');
+                    option.value = sheetName;
+                    option.textContent = sheetName;
+                    sheetSelect.appendChild(option);
+                });
+
+                // Show results and hide spinner
+                resultsArea.classList.remove('hidden');
+                loadingSpinner.classList.add('hidden');
+                
+                // By default, render the simple JSON for the first sheet
+                renderSimpleJson();
+                showMessage('File analyzed successfully!', 'success');
+
+            } catch (err) {
+                console.error('Error parsing Excel file:', err);
+                showMessage(`Error parsing file: ${err.message}`, 'error');
+                loadingSpinner.classList.add('hidden');
+            }
+        }
+
+        /**
+         * Renders the "Simple JSON" (array of objects) for the selected sheet
+         */
+        function renderSimpleJson() {
+            if (!currentWorkbook) return;
+
+            const sheetName = sheetSelect.value;
+            const worksheet = currentWorkbook.Sheets[sheetName];
+            
+            // This utility converts a sheet to an array of objects
+            // By default (no 'header' option), it uses the first row as keys.
+            const jsonData = XLSX.utils.sheet_to_json(worksheet, {
+                defval: null, // Use null for blank cells
+            });
+            
+            updateJsonOutput(jsonData);
+        }
+
+        /**
+         * Renders the "Full Workbook JSON" (raw SheetJS object)
+         */
+        function renderFullJson() {
+            if (!currentWorkbook) return;
+            // This displays the entire, complex workbook object
+            // This object contains .Sheets, .SheetNames, and cell objects
+            // with properties like 'v' (value), 'f' (formula), 't' (type), etc.
+            updateJsonOutput(currentWorkbook);
+        }
+
+        /**
+         * Updates the <pre> block with formatted JSON
+         * @param {object | Array} data - The data to stringify and display
+         */
+        function updateJsonOutput(data) {
+            try {
+                // Stringify the JSON with 2-space indentation for readability
+                // Use a replacer to handle potential BigInts or complex objects
+                const jsonString = JSON.stringify(data, (key, value) => 
+                    typeof value === 'bigint' ? value.toString() : value, 
+                2);
+                jsonOutput.textContent = jsonString;
+            } catch (err) {
+                console.error('Error stringifying JSON:', err);
+                jsonOutput.textContent = `Error: Could not display JSON. ${err.message}`;
+            }
+        }
+
+        /**
+         * Copies the content of the JSON output block to the clipboard
+         */
+        function copyJsonToClipboard() {
+            const textToCopy = jsonOutput.textContent;
+
+            // We must use a temporary textarea to use document.execCommand
+            // as navigator.clipboard.writeText may be blocked in some (i)frames.
+            const tempTextArea = document.createElement('textarea');
+            tempTextArea.value = textToCopy;
+            document.body.appendChild(tempTextArea);
+            tempTextArea.select();
+            
+            try {
+                document.execCommand('copy');
+                // Provide user feedback
+                copyJsonBtn.textContent = 'Copied!';
+                copyJsonBtn.classList.add('bg-green-600', 'hover:bg-green-700');
+                copyJsonBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+                
+                setTimeout(() => {
+                    copyJsonBtn.textContent = 'Copy to Clipboard';
+                    copyJsonBtn.classList.remove('bg-green-600', 'hover:bg-green-700');
+                    copyJsonBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+                }, 2000);
+
+            } catch (err) {
+                console.error('Failed to copy text: ', err);
+                showMessage('Failed to copy text.', 'error');
+            }
+            
+            document.body.removeChild(tempTextArea);
+        }
+
+        /**
+         * Displays a status or error message
+         * @param {string} text - The message to display
+         * @param {'success' | 'error'} type - The type of message
+         */
+        function showMessage(text, type = 'success') {
+            messageBox.textContent = text;
+            messageBox.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-800');
+
+            if (type === 'success') {
+                messageBox.classList.add('bg-green-1OS0', 'text-green-800');
+            } else {
+                messageBox.classList.add('bg-red-100', 'text-red-800');
+            }
+        }
+
+    </script>
+</body>
+</html>

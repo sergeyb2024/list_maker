@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Interactive App Builder</title>
+    <style>
+        /* --- UI THEME --- */
+        :root { --primary: #3b82f6; --bg: #f8fafc; --panel: #1e293b; --text: #334155; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; height: 100vh; display: flex; background-color: var(--bg); color: var(--text); overflow: hidden; }
+
+        /* --- SIDEBAR --- */
+        #sidebar {
+            width: 300px; background-color: var(--panel); color: white; padding: 20px;
+            display: flex; flex-direction: column; gap: 15px; box-shadow: 4px 0 15px rgba(0,0,0,0.2); z-index: 100;
+        }
+        h2 { margin: 0; font-size: 1.2rem; color: #e2e8f0; }
+        .section-title { font-size: 0.75rem; text-transform: uppercase; color: #94a3b8; letter-spacing: 1px; font-weight: bold; margin-top: 10px; }
+
+        /* Tools */
+        .tool-btn {
+            padding: 12px; background: #334155; border: 1px solid #475569; border-radius: 6px;
+            color: white; cursor: pointer; text-align: left; transition: 0.2s; font-size: 0.9rem;
+        }
+        .tool-btn:hover { background: #475569; border-color: var(--primary); }
+        .upload-btn { border-style: dashed; text-align: center; background: rgba(255,255,255,0.05); }
+        input[type="file"] { display: none; }
+        
+        .export-btn { margin-top: auto; background: #10b981; border: none; font-weight: bold; text-align: center; }
+        .export-btn:hover { background: #059669; }
+
+        /* --- CANVAS --- */
+        #canvas { flex-grow: 1; position: relative; background-image: radial-gradient(#cbd5e1 2px, transparent 2px); background-size: 25px 25px; overflow: auto; }
+
+        /* --- GENERATED COMPONENTS --- */
+        
+        /* 1. Master Selector */
+        .master-control {
+            position: absolute; top: 40px; left: 40px; background: white; padding: 15px; width: 280px;
+            border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); border: 1px solid #cbd5e1;
+            z-index: 50; cursor: move;
+        }
+        .master-select { width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 6px; font-size: 1rem; margin-top: 5px; cursor: pointer; }
+        
+        /* 2. Detail View */
+        .detail-card {
+            position: absolute; top: 160px; left: 40px; background: white; width: 500px; max-height: 75vh;
+            border-radius: 8px; box-shadow: 0 15px 30px rgba(0,0,0,0.15); border: 1px solid #cbd5e1;
+            display: none; flex-direction: column; overflow: hidden;
+        }
+        .detail-header {
+            background: #f1f5f9; padding: 15px; border-bottom: 1px solid #e2e8f0; font-weight: bold;
+            display: flex; justify-content: space-between; align-items: center; cursor: move;
+        }
+        .detail-body { padding: 20px; overflow-y: auto; }
+
+        /* 3. Fields */
+        .field-row { margin-bottom: 15px; }
+        .field-label { font-size: 0.75rem; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px; display: block; }
+        .field-input, textarea { width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; box-sizing: border-box; font-family: inherit; }
+        .field-input:focus { border-color: var(--primary); outline: none; }
+        
+        /* 4. Smart Widgets (Checklists & Notes) */
+        .checklist-container { background: #f8fafc; padding: 10px; border: 1px solid #e2e8f0; border-radius: 6px; }
+        .checklist-item { display: flex; align-items: center; gap: 10px; padding: 4px 0; cursor: pointer; }
+        .checklist-item.completed span { text-decoration: line-through; color: #94a3b8; }
+        .checklist-item input { cursor: pointer; width: 16px; height: 16px; }
+
+        .user-note { 
+            background: #fffbeb; border-left: 4px solid #f59e0b; padding: 10px; margin-bottom: 15px; 
+            font-size: 0.9rem; color: #78350f; position: relative; 
+        }
+        .delete-note { position: absolute; top: 2px; right: 5px; cursor: pointer; color: #b45309; font-weight: bold; }
+
+        .btn-small { font-size: 0.7rem; padding: 4px 8px; background: #e2e8f0; border: none; border-radius: 4px; cursor: pointer; margin-left: 10px; }
+        .btn-small:hover { background: #cbd5e1; }
+
+        .img-avatar { width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 10px; display: block; object-fit: cover; border: 3px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <h2>App Studio</h2>
+        
+        <div class="section-title">1. Data Source</div>
+        <label class="tool-btn upload-btn">
+            📂 Upload JSON Data
+            <input type="file" id="file-upload" accept=".json">
+        </label>
+        <div id="record-count" style="font-size:0.8rem; color:#10b981; margin-top:5px;"></div>
+
+        <div class="section-title">2. Attach Widgets</div>
+        <button class="tool-btn" onclick="addStickyNote()">📝 Attach Sticky Note</button>
+        <p style="font-size:0.75rem; color:#94a3b8;">
+            *Note: To make a list interactive (Checklist), click the "Convert to Checklist" button that appears next to arrays in the preview.
+        </p>
+
+        <button class="tool-btn export-btn" onclick="exportFullApp()">🚀 Export Live App</button>
+    </div>
+
+    <div id="canvas">
+        </div>
+
+    <script>
+        // --- STATE MANAGEMENT ---
+        let db = []; // The main data
+        let annotations = {}; // Stores notes and checklist states: { recordIndex: { notes: [], checklists: { fieldName: [bool, bool] } } }
+        let currentRecordIndex = null;
+
+        // --- 1. INITIALIZATION ---
+        const fileInput = document.getElementById('file-upload');
+        const canvas = document.getElementById('canvas');
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const json = JSON.parse(e.target.result);
+                    db = Array.isArray(json) ? json : (json.workbook ? alert("Use Raw Data JSON") : [json]);
+                    if(!Array.isArray(db)) db = [db]; // fallback
+                    
+                    // Reset Annotations on new load
+                    annotations = {}; 
+                    document.getElementById('record-count').innerText = `Loaded ${db.length} records successfully.`;
+                    initUI();
+                } catch (err) { alert("JSON Error: " + err.message); }
+            };
+            reader.readAsText(file);
+        });
+
+        // --- 2. UI BUILDER ---
+        function initUI() {
+            canvas.innerHTML = '';
+            
+            // A. Master Control
+            const master = document.createElement('div');
+            master.className = 'master-control';
+            master.id = 'master-card'; // ID for export positioning
+            const labelKey = findLabelKey(db[0]);
+            
+            let opts = `<option value="">-- Select Record --</option>`;
+            db.forEach((item, idx) => opts += `<option value="${idx}">${item[labelKey] || 'Record '+idx}</option>`);
+            
+            master.innerHTML = `
+                <label class="field-label" style="color:#334155">Select ${labelKey}</label>
+                <select class="master-select" onchange="loadRecord(this.value)">${opts}</select>
+            `;
+            canvas.appendChild(master);
+            makeDraggable(master);
+
+            // B. Detail Card (Hidden)
+            const detail = document.createElement('div');
+            detail.className = 'detail-card';
+            detail.id = 'detail-card';
+            detail.innerHTML = `
+                <div class="detail-header" id="detail-handle">
+                    <span id="detail-title">Record Details</span>
+                    <span style="font-size:0.8rem; color:#64748b">:: Drag ::</span>
+                </div>
+                <div class="detail-body" id="detail-body"></div>
+            `;
+            canvas.appendChild(detail);
+            makeDraggable(detail, document.getElementById('detail-handle'));
+        }
+
+        // --- 3. LOGIC ENGINE ---
+        window.loadRecord = function(index) {
+            const card = document.getElementById('detail-card');
+            const body = document.getElementById('detail-body');
+            const title = document.getElementById('detail-title');
+            
+            if (index === "") { card.style.display = 'none'; return; }
+            
+            currentRecordIndex = index;
+            card.style.display = 'flex';
+            const data = db[index];
+            title.innerText = data[findLabelKey(data)] || "Details";
+            
+            // Render Fields
+            let html = '';
+            
+            // 1. Render Image
+            const imgKey = Object.keys(data).find(k => k.toLowerCase().match(/picture|img|photo|avatar/));
+            if (imgKey) html += `<img src="${data[imgKey]}" class="img-avatar">`;
+
+            // 2. Render Notes (From Annotations)
+            const recordNotes = annotations[index]?.notes || [];
+            recordNotes.forEach((note, noteIdx) => {
+                html += renderNoteHTML(note, noteIdx);
+            });
+
+            // 3. Render Data Fields
+            for (const [key, val] of Object.entries(data)) {
+                if (['_id', 'guid', 'index', imgKey].includes(key)) continue;
+                html += `<div class="field-row">`;
+                html += `<label class="field-label">${key}`;
+                
+                // Add "Convert" button if it's an array
+                if (Array.isArray(val)) {
+                    html += `<button class="btn-small" onclick="convertToChecklist('${key}')">Convert to Checklist</button>`;
+                }
+                html += `</label>`;
+                
+                // Check if this field has been converted to a checklist in annotations
+                if (annotations[index]?.checklists?.[key]) {
+                    html += renderChecklist(key, val, annotations[index].checklists[key]);
+                } else {
+                    html += renderStandardInput(val);
+                }
+                html += `</div>`;
+            }
+            
+            body.innerHTML = html;
+        };
+
+        // --- 4. WIDGET LOGIC ---
+
+        // Widget: Checklist
+        window.convertToChecklist = function(key) {
+            if (!annotations[currentRecordIndex]) annotations[currentRecordIndex] = { notes: [], checklists: {} };
+            if (!annotations[currentRecordIndex].checklists) annotations[currentRecordIndex].checklists = {};
+            
+            // Initialize checklist state (all false/unchecked initially)
+            const dataLength = db[currentRecordIndex][key].length;
+            annotations[currentRecordIndex].checklists[key] = new Array(dataLength).fill(false);
+            
+            // Re-render
+            loadRecord(currentRecordIndex);
+        };
+
+        window.toggleCheckitem = function(key, itemIdx) {
+            const state = annotations[currentRecordIndex].checklists[key];
+            state[itemIdx] = !state[itemIdx]; // toggle boolean
+            loadRecord(currentRecordIndex); // re-render to show strikethrough
+        };
+
+        function renderChecklist(key, dataArray, stateArray) {
+            let html = `<div class="checklist-container">`;
+            dataArray.forEach((item, idx) => {
+                const isChecked = stateArray[idx];
+                const label = (typeof item === 'object') ? (item.name || item.id) : item;
+                html += `
+                    <div class="checklist-item ${isChecked ? 'completed' : ''}" onclick="toggleCheckitem('${key}', ${idx})">
+                        <input type="checkbox" ${isChecked ? 'checked' : ''}>
+                        <span>${label}</span>
+                    </div>`;
+            });
+            html += `</div>`;
+            return html;
+        }
+
+        // Widget: Sticky Notes
+        window.addStickyNote = function() {
+            if (currentRecordIndex === null) return alert("Please select a record first.");
+            const text = prompt("Enter your note:");
+            if (!text) return;
+
+            if (!annotations[currentRecordIndex]) annotations[currentRecordIndex] = { notes: [], checklists: {} };
+            if (!annotations[currentRecordIndex].notes) annotations[currentRecordIndex].notes = [];
+            
+            annotations[currentRecordIndex].notes.push(text);
+            loadRecord(currentRecordIndex);
+        };
+
+        window.deleteNote = function(noteIdx) {
+            if(!confirm("Delete this note?")) return;
+            annotations[currentRecordIndex].notes.splice(noteIdx, 1);
+            loadRecord(currentRecordIndex);
+        }
+
+        function renderNoteHTML(text, idx) {
+            return `<div class="user-note">${text} <span class="delete-note" onclick="deleteNote(${idx})">×</span></div>`;
+        }
+
+        // Helper: Standard Inputs
+        function renderStandardInput(val) {
+            if (typeof val === 'boolean') return `<select class="field-input"><option ${val?'selected':''}>Yes</option><option ${!val?'selected':''}>No</option></select>`;
+            if (Array.isArray(val)) {
+                let opts = val.map(v => `<option>${(typeof v==='object' ? (v.name||v.id) : v)}</option>`).join('');
+                return `<select class="field-input">${opts}</select>`;
+            }
+            if (typeof val === 'string' && val.length > 50) return `<textarea rows="3">${val}</textarea>`;
+            return `<input type="text" class="field-input" value="${val}">`;
+        }
+
+        // Helper: Draggable
+        function makeDraggable(el, handle) {
+            const trigger = handle || el;
+            let isDrag = false, startX, startY, initL, initT;
+            trigger.addEventListener('mousedown', e => {
+                if(e.target.tagName.match(/SELECT|INPUT|BUTTON|TEXTAREA/)) return;
+                isDrag = true; startX=e.clientX; startY=e.clientY;
+                const s = window.getComputedStyle(el);
+                initL = parseInt(s.left||0); initT = parseInt(s.top||0);
+                el.style.zIndex = 100;
+            });
+            window.addEventListener('mousemove', e => {
+                if(!isDrag) return;
+                e.preventDefault();
+                el.style.left = (initL + e.clientX - startX) + 'px';
+                el.style.top = (initT + e.clientY - startY) + 'px';
+            });
+            window.addEventListener('mouseup', () => isDrag = false);
+        }
+
+        function findLabelKey(obj) { return Object.keys(obj).find(k => k.toLowerCase().match(/name|title|email|id/)) || '_id'; }
+
+
+        // --- 5. EXPORT ENGINE (The Fix) ---
+        function exportFullApp() {
+            if(db.length === 0) return alert("No data loaded.");
+
+            // We grab the CSS directly from the page
+            const css = document.querySelector('style').innerText;
+            
+            // We capture the current positions of the UI elements
+            const masterPos = document.getElementById('master-card').style;
+            const detailPos = document.getElementById('detail-card').style;
+
+            const htmlContent = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>My App</title>
+    <style>${css}</style>
+</head>
+<body>
+    <div id="canvas">
+        <div class="master-control" id="master-card" style="left:${masterPos.left || '40px'}; top:${masterPos.top || '40px'}">
+             </div>
+        <div class="detail-card" id="detail-card" style="left:${detailPos.left || '40px'}; top:${detailPos.top || '160px'}; display:none;">
+            <div class="detail-header" id="detail-handle">
+                <span id="detail-title">Details</span>
+            </div>
+            <div class="detail-body" id="detail-body"></div>
+        </div>
+    </div>
+
+    <script>
+        // --- EMBEDDED DATA & STATE ---
+        const db = ${JSON.stringify(db)};
+        let annotations = ${JSON.stringify(annotations)};
+        let currentRecordIndex = null;
+
+        // --- REPLICATED LOGIC ---
+        
+        // Init
+        (function() {
+            const master = document.getElementById('master-card');
+            const labelKey = findLabelKey(db[0]);
+            let opts = '<option value="">-- Select Record --</option>';
+            db.forEach((item, idx) => opts += '<option value="'+idx+'">'+(item[labelKey] || 'Record '+idx)+'</option>');
+            
+            master.innerHTML = '<label class="field-label">Select '+labelKey+'</label><select class="master-select" onchange="loadRecord(this.value)">'+opts+'</select>';
+        })();
+
+        // Core Function
+        window.loadRecord = function(index) {
+            const card = document.getElementById('detail-card');
+            const body = document.getElementById('detail-body');
+            const title = document.getElementById('detail-title');
+            
+            if (index === "") { card.style.display = 'none'; return; }
+            currentRecordIndex = index;
+            card.style.display = 'flex';
+            const data = db[index];
+            title.innerText = data[findLabelKey(data)];
+            
+            let html = '';
+            
+            // Image
+            const imgKey = Object.keys(data).find(k => k.toLowerCase().match(/picture|img|photo|avatar/));
+            if (imgKey) html += '<img src="'+data[imgKey]+'" class="img-avatar">';
+
+            // Notes
+            const recordNotes = annotations[index]?.notes || [];
+            recordNotes.forEach((note, i) => {
+                html += '<div class="user-note">' + note + ' <span class="delete-note" onclick="deleteNote('+i+')">×</span></div>';
+            });
+
+            // Fields
+            for (const [key, val] of Object.entries(data)) {
+                if (['_id', 'guid', 'index', imgKey].includes(key)) continue;
+                html += '<div class="field-row"><label class="field-label">'+key;
+                
+                // In export mode, we allow creating checklists if not exists
+                if (Array.isArray(val)) html += '<button class="btn-small" onclick="convertToChecklist(\\''+key+'\\')">Convert to Checklist</button>';
+                
+                html += '</label>';
+                
+                if (annotations[index]?.checklists?.[key]) {
+                    html += renderChecklist(key, val, annotations[index].checklists[key]);
+                } else {
+                    html += renderStandardInput(val);
+                }
+                html += '</div>';
+            }
+            body.innerHTML = html;
+        };
+
+        // Widget Logic
+        window.convertToChecklist = function(key) {
+            if (!annotations[currentRecordIndex]) annotations[currentRecordIndex] = { notes: [], checklists: {} };
+            if (!annotations[currentRecordIndex].checklists) annotations[currentRecordIndex].checklists = {};
+            annotations[currentRecordIndex].checklists[key] = new Array(db[currentRecordIndex][key].length).fill(false);
+            loadRecord(currentRecordIndex);
+        };
+        
+        window.toggleCheckitem = function(key, itemIdx) {
+            const state = annotations[currentRecordIndex].checklists[key];
+            state[itemIdx] = !state[itemIdx];
+            loadRecord(currentRecordIndex);
+        };
+
+        window.addStickyNote = function() {
+             // Note: In export mode, we removed the button to add notes to keep UI clean, 
+             // but the logic is here if you want to re-enable it via console or UI modification.
+        };
+
+        window.deleteNote = function(idx) {
+            if(!confirm("Delete?")) return;
+            annotations[currentRecordIndex].notes.splice(idx, 1);
+            loadRecord(currentRecordIndex);
+        };
+
+        // Render Helpers
+        function renderStandardInput(val) {
+            if (typeof val === 'boolean') return '<select class="field-input"><option '+(val?'selected':'')+'>Yes</option><option '+(!val?'selected':'')+'>No</option></select>';
+            if (Array.isArray(val)) {
+                let opts = val.map(v => '<option>'+(typeof v==='object' ? (v.name||v.id) : v)+'</option>').join('');
+                return '<select class="field-input">'+opts+'</select>';
+            }
+            if (typeof val === 'string' && val.length > 50) return '<textarea rows="3">'+val+'</textarea>';
+            return '<input type="text" class="field-input" value="'+val+'">';
+        }
+
+        function renderChecklist(key, dataArray, stateArray) {
+            let html = '<div class="checklist-container">';
+            dataArray.forEach((item, idx) => {
+                const isChecked = stateArray[idx];
+                const label = (typeof item === 'object') ? (item.name || item.id) : item;
+                html += '<div class="checklist-item '+(isChecked ? 'completed' : '')+'" onclick="toggleCheckitem(\\''+key+'\\', '+idx+')">';
+                html += '<input type="checkbox" '+(isChecked ? 'checked' : '')+'> <span>'+label+'</span></div>';
+            });
+            html += '</div>';
+            return html;
+        }
+
+        function findLabelKey(obj) { return Object.keys(obj).find(k => k.toLowerCase().match(/name|title|email|id/)) || '_id'; }
+    <\/script>
+</body>
+</html>`;
+
+            const blob = new Blob([htmlContent], { type: 'text/html' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'my-smart-app.html';
+            link.click();
+        }
+    </script>
+</body>
+</html>
